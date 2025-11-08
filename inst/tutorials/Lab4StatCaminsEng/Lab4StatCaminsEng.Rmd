@@ -1,0 +1,508 @@
+---
+title: "Lab4 - Complete Multiple Linear Regression"
+subtitle: "
+<div id='logo-nom-subtitle' style='text-align:center;'>
+  <img src='www/logoUPC.png' style='height:50px; display:block; margin:0 auto 5px auto;'>
+  <p style='margin:0; font-weight:bold; color:#0055A4 !important; font-size:16px;'>Maribel Ortego i Miquel Aguirre</p>
+</div>"
+author: "Maribel Ortego i Miquel Aguirre"
+date: "`r format(Sys.time(), '%Y %B %d')`"
+
+output:
+  learnr::tutorial:
+    progressive: false
+    theme:
+      bslib: true
+      bootswatch: minty
+    css:
+      - "css/styles.css"
+      - "css/hero-image-css-v2.css"
+    includes:
+      in_header: "www/hero-image-PiE.html"
+    number_sections: TRUE
+    toc: true
+    toc_depth: 4
+    toc_float: true
+
+runtime: shiny_prerendered
+---
+
+```{r, label="generaloptions", include=FALSE}
+# Configuració general
+library(learnr)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width = 6,
+  out.width = "50%",
+  fig.align = "center",
+  fig.caption = TRUE
+)
+```
+
+# 📌 Introducció
+
+In this Lab4 we will work on the complete multiple linear regression model.
+
+#  Reference situation
+
+A hydrographic basin consists of 4 sub-basins. Each sub-basin has a rain gauge, which is supposed to represent precipitation in the corresponding sub-basin. There are rainfall records of the four rain gauges for 30 years.
+From these records there have been selected the days in which, having rained in the four sub-basins, it has been possible to detect an increase (always positive) of the flow of the river that drains the basin in the 24 hours after the rainy day.
+
+The dataset consists of the 24-hour precipitation recorded in each of the rain gauges (\emph{plA, plB, plC, plD}) in deciliters per square meter; the season of the year in which the precipitation occurs (1 winter, 2 spring, 3 summer, 4 autumn) and the increase in flow ($m^3/s$) due to rain (runoff) in the main river of the basin.
+
+
+## Libraries and data
+
+::: {.infobox .caution data-latex="{caution}"}
+**Remember to set working directory correctly** before you read the dataset.
+:::
+
+First of all, we activate the libraries that we will use in today's session:
+
+```{r llibreries}
+library(here)
+library(stats)
+library(car)
+library(relimp)
+```
+
+::: {.infobox .circle data-latex="{circle}"}
+
+***ATTENTION!***
+
+Open the file **"Precip-Cuenca.txt"** using the **Notebook**.  
+Observe the file format: how are the columns separated? With tab,comma, semicolon, space? Are variable names included? Are there initial rows with comments?
+:::
+
+We read the data set taking into account the structure we have seen. We verify the name of the columns and the number of observations it contains:
+
+```{r lectura_dades, echo=TRUE}
+X <- read.table(file="Precip-Cuenca.txt", sep="", dec=".", header=TRUE, strip.white=TRUE)
+colnames(X)
+nrow(X)
+```
+
+# First descriptive analysis
+
+## Estació as a factor
+
+We can generate a first descriptive analysis of the variables:
+```{r analisi_desc}
+summary(X)
+```
+
+We observe that the data set includes the _Estació de l'any_ (Season) variable. The numeric values 1,2,3,4 are a quick way to refer to the seasons of the year. In fact they are the levels of a factor, not a numeric variable. But instead `R` is identifying the variable as a numeric variable. Therefore, it must be stated explicitly that it is a factor, and at the same time we will change the values 1,2,3,4 for the corresponding labels of the seasons of the year (1 Winter, 2 Spring, 3 Summer, 4 Fall). We will generate a new variable in the dataframe:
+
+```{r}
+X$fEst <- factor(X$Estacion,labels=c('hiv','pri','est','tar'))
+
+```
+
+### 🖊Exercise: Let's generate a new `summary` of the dataset. Is the number of days of precipitation the same for all seasons of the year?
+
+```{r summary_precipitacions, exercise=TRUE}
+```
+
+## Graphical representations
+
+The dispersion diagram matrix provides us with the dispersion diagram of all pairs of variables in the data set. The idea is attractive, but if there are more than 3 or 4 variables we see nothing:
+
+```{r, fig.cap="Matriu de diagrames de dispersió de totes les variables del conjunt de dades"}
+scatterplotMatrix(X)
+```
+
+As the variable of interest is the runoff, we represent the dispersion diagrams of precipitation in each rain gauge against the runoff.
+
+::: {.infobox .circle data-latex="{circle}"}
+
+Remember that by default the `scatterplot` includes a series of curves that usually do not interest us. Look at Lab2 what options we had to modify for a cleaner graph.
+:::
+
+```{r, fig.cap="Diagrama de dispersió: plA/B/C/D vs dcaudal"}
+car::scatterplot(X$plA, X$dcaudal)
+car::scatterplot(X$plB, X$dcaudal)
+car::scatterplot(X$plC, X$dcaudal)
+car::scatterplot(X$plD, X$dcaudal)
+```
+
+## Logarithmic transforms
+
+::: {.infobox .caution data-latex="{caution}"}
+**Log transform**
+Precipitation and runoff / flow are  variables with a positive support and their scale is relative. In a simplified way, when we talk about rainfall, 2 mm is twice 1mm, but 52 mm and 51 mm is almost the same. The scale of the variable is relative. This happens with many common variables in engineering, which have either positive  or in an interval supports. In this case it can be useful to work on an additive scale using the transform by logarithm (natural, neperian).
+:::
+
+ Next we generate the new variables and add them to the dataframe:
+
+```{r}
+X$logplA <- with(X, log(plA))
+X$logplB <- with(X, log(plB))
+X$logplC <- with(X, log(plC))
+X$logplD <- with(X, log(plD))
+X$logdcau <- with(X, log(dcaudal))
+summary(X)
+```
+
+## Covariance and (linear) correlation
+
+We want to measure *linear* correlations between the numeric variables of the set. We select the subset of numeric variables, leaving out the two Estació ( _Season_) variables, which are factors:
+```{r}
+Xnum <- X[,c(-1,-7)]
+head(Xnum)
+```
+
+First we compute the covariance for all pairs of variables. We get the covariance matrix. We observe that the values are difficult to interpret. We calculate Pearson's linear correlation coefficients for all pairs of variables. This matrix is called the correlation matrix:
+
+```{r}
+cov(Xnum)
+cor(Xnum)
+```
+
+### 🖊Exercise: "Select only the log* variables in the data set. Find the matrix of correlations of these variables. What is the pair of variables with the largest correlation? What is the pair of variables with the smallest correlation?"
+
+```{r conjunt-dades, exercise=TRUE}
+```
+
+Let's visualize the scatterplots of the precipitation variables in additive scale (log-Pl*) against the log-runoff (logcabal). Compare what you see in the plots with the correlation values you just obtained.
+
+::: {.infobox .circle data-latex="{circle}"}
+
+**Observation**: We represent the four graphs together using the `par` instruction, which allows us to divide the graphic window in matrix form. Once represented, we return to a single graph per window with the same instruction `par`:
+:::
+
+```{r, fig.cap="Matriu de diagrames de dispersió de totes les variables del conjunt de dades"}
+par(mfrow=c(2,2))
+scatterplot(X$logplA, X$logdcau)
+scatterplot(X$logplB, X$logdcau)
+scatterplot(X$logplC, X$logdcau)
+scatterplot(X$logplD, X$logdcau)
+par(mfrow=c(1,1))
+```
+
+## Collinearity
+
+The independence of the predictor variables is NOT among the hypotheses of the Linear Regression model. **Let's say it again**: Predictor variables do not have to be independent. But if there is a lot of dependence, the information that they provide _is overlapping_ and _may present_ problems with the hypothesis tests. (We can go deeper into this aspect later). Therefore, it is necessary to control the collinearity between the predictor variables.
+
+After a semester of Algebra, you know that:
+
+- a symmetric and definite positive matrix can be diagonalized.
+
+- if we write a set of vectors in matrix form and there is one of them that is linear combination of some of the others, the determinant of the matrix is zero.
+
+- If we compute the eigenvalues of this matrix, we will obtain at least one that will be zero.
+
+We will use all these elements to make the algebraic approximation to the collinearity of the predictive variables.
+
+- Matrix of variances and covariances is symmetric and positive semi-definite
+- The matrix of correlations, (which are normalized covariances), is also symmetric and positive semi-definite
+- We will look for the eigenvalues of the correlation matrix. If two of the predictive variables are collinear, we will obtain a null or small eigenvalue.
+
+Let's select the predictive variables and compute the correlation matrix:
+
+```{r}
+Xlogs <- Xnum[,6:9]
+cor(Xlogs)
+```
+
+We do not observe very large correlation values. Next we look for the eigenvalues of the matrix:
+
+```{r}
+XlogsVP <- eigen(cor(Xlogs))
+XlogsVP$values
+```
+
+### 🖊Exercise: "Look at the eigenvalues. Are there any null ones? Is there any very small ones?"
+```{r valors_propis, exercise=TRUE}
+```
+
+If the predictor variables of our model have a high collinearity, it is necessary to look for a solution before executing the model. The most drastic solution and the one we think about first is to eliminate the collinear variable. This will be the option in our case, _because we are learning the methods_. A much more elegant option, and the advisable one, would be to apply a Principal Component Analysis (ACP) to keep information, while making the variables uncorrelated. (ACP is out of the scope of the subject).
+
+In the following section we will see another approximation to the collinearity of predictor variables.
+
+# Regression models
+
+Our goal is to predict the log-runoff (logcabal) from the information provided by the log rain gauges. We will propose several regression models, with all the essential steps for their statistical interpretation.
+
+## First model
+
+In the first model we predict the log-runoff (logcabal) from all four rain gauges (logPl*)
+
+::: {.infobox .caution data-latex="{caution}"}
+
+We want ot fit the model:
+\[
+logdcau = \beta_0+ \beta_1* logplA + \beta_2* logplB + \beta_3* logplC + \beta_4* logplD + \epsilon
+\]
+Note that the `R` notation indicates that we predict one variable as a linear combination of the others, using the _tilde_ symbol. You do not need to write the model coefficients.
+:::
+
+```{r}
+RM2 <- lm(X$logdcau ~ X$logplA + X$logplB + X$logplC + X$logplD)
+```
+
+Before we continue with the interpretation of the model, collinearity must be controlled. In this case we will use the `vif` function of the `car` package. The underlying idea is the one we have already presented, but the result is presented as a numerical criterion for those users who do not know what an eigenvalue is. The `VIF` computes how much the variance of a regression model coefficient increases if the predictor variables have high correlation.
+
+::: {.infobox .caution data-latex="{caution}"}
+Interpretation: if we observe a `VIF` greater than five, we must monitor the variable; if the `VIF` is greater than 10 we must fix the problem, either by applying ACP or by eliminating the variable.
+The interpretation of these values is related to the size of the eigenvalues. _Grosso modo_ a `VIF` greater than 10 corresponds to an eigenvalue less than 1/10, that is a small value, which guides us towards the collinearity of the corresponding predictors.
+:::
+
+```{r}
+car::vif(RM2)
+```
+
+A key point in the interpretation of the regression model is the validation of the model hypotheses. Remember that the regression model hypotheses are imposed on the error term. When we fit the model, we obtain the errors that correspond to the data that is the sample errors, the residuals. And therefore, what we will check is that the residuals meet the hypotheses of the model:
+
+*  Residuals have zero mean (corresponding to Errors have Expectation 0)
+*  Residuals have constant variance (corresponding to Errors are homocedastic)
+*  Residuals are uncorrelated
+*  Residuals have Normal distribution
+
+We can assess these aspects graphically and using hypothesis tests. Usually we combine the two types of diagnosis.
+
+`R` provides four diagnostic plots:
+
+```{r, fig.cap="All four diagnostic plots of model RM2"}
+par(mfrow=c(2,2))
+plot(RM2)
+par(mfrow=c(1,1))
+```
+
+We can represent the plots one by one for a better visualization. Remember that in the residuals vs. fitted values plot we assess if the residuals have a null average, that they have constant variance and that they are uncorrelated:
+
+::: {.infobox .caution data-latex="{caution}"}
+Look at the graph. The residuals are represented on the ordinate axis. 
+
+* What is the average? (A red line helps us, which corresponds to a moving average).
+
+* Observe the residuals represented. Can we include all of them in an interval of constant width (variability)?
+
+* Look at the residuals. Do we see "forms" (residuals aligned in some way)?
+
+:::
+
+```{r, fig.cap="Residuals vs Fitted plot of model RM2"}
+plot(RM2, which=1)
+```
+
+QQ-plot allows us to assess the normality of residuals:
+
+```{r,  fig.cap="Normal Q-Q plot of model RM2"}
+plot(RM2, which=2)
+```
+.. but it is better to use the `qqPlot` of the `car` package, which includes confidence bands for a better diagnosis:
+
+::: {.infobox .caution data-latex="{caution}"}
+Look at the plot. The distribution function of the reference model (Normal in this case) has been represented together with the empirical cumulative distribution function of the residuals, both rescaled.
+
+* Do we have reasons to reject  that residuals are normally distributed?
+* The confidence interval helps us to interpret. It contains at least 95% of residuals.
+
+:::
+
+```{r,  fig.cap="Normal Q-Q plot of model RM2"}
+car::qqPlot(RM2$residuals)
+```
+
+The Scale-Location plot allows us to analyze the uncorrelation in greater depth, in case we have suspicions with graph1.
+
+::: {.infobox .caution data-latex="{caution}"}
+Look at the axes. Note that on the ordinate axis we represent the rescaled residuals. This scale allows us to better discuss uncorrelation.
+:::
+
+```{r, fig.cap="Scale-Location plot of model RM2"}
+plot(RM2, which=3)
+```
+
+And finally, the _Leverage_ plot does not provide assessment for any of the hypothesis of the model, but it is very useful for us to detect influential points that can greatly influence our model.
+
+::: {.infobox .caution data-latex="{caution}"}
+We assess Leverage values, measured with Cook distance, greater than 1. In the plot that we have previously represented in the group of 4 plots, this reference value is marked with a curve. When we represent the plot individually, as we do next, the plot presents a different format, but the utility is the same. In this case all Cook's distance values are quite below 1, and therefore there are no influential values.
+:::
+
+```{r, fig.cap="Leverage plot of model RM2"}
+plot(RM2, which=4)
+```
+
+If in our verifications we find that the hypotheses of the model are met, we can proceed to the analysis of the model. If any of the hypotheses (normality, homocedasticity, uncorrelation) are not met, it will be necessary to carry out a previous treatment to try to solve the issue. We will discuss about it at Lab5.
+
+In the example we are dealing with, since we have verified that the hypotheses of the model are met, we proceed to assess the regression model.
+
+Remember that in this step we observe the `summary` of the model and :
+
+* we assess the  `F` test of global fit: 
+
+$$
+H_0: \beta_1=\beta_2=\beta_3=\beta_4=0 \newline
+H_1: \text{some of the coefficients} \neq 0
+$$
+
+* we assess the individual `t` test of each coefficient , \( i= 0, 1, 2, 3, 4, 5\).
+
+$$
+H_0: \beta_i=0 \newline
+H_1: \beta_i \neq 0
+$$
+
+* If we find that any of the coefficients is not significant, we will proceed to make a new iteration with a simplified model. 
+
+* We assess the goodness of fit of the model with the   determination coefficient $R^2$, $0<R^2 < 1$.
+
+::: {.infobox .caution data-latex="{caution}"}
+**First interpretation of the hypotheses tests**. We need to decide if to reject $H_0$ of if we cannot reject it. We do it based on a probability called p-value. We set $\alpha$, usually 0.01, 0.05 or 0.1.
+
+* If p-value$> \alpha$, we cannot reject $H_0$. 
+
+* If p-value$< \alpha$,  we reject $H_0$ (and therefore we keep $H_1$). 
+
+* The implications of rejecting or not rejecting depend on the contrast that we have dealing with.
+
+:::
+
+```{r}
+summary(RM2)
+```
+
+In this summary we see that the linear model makes sense (that is, in F test we have a p-value < 2.2e-16 and therefore we reject that all the coefficients of the model, except $\beta_0$, are null all at the same time).  When we assess the `t` tests of the coefficients one by one (we test $\beta_i=0, i=1, \dots, 5$), we observe that some of the coefficients are not significant. Specifically, the p-values of the  coefficients accompanying logplB and logplC are $> \alpha$, for common $\alpha$ values, and therefore we can not reject that   $\beta_i=0$. Therefore, we will do a second iteration of the model where we will eliminate these rain gauges from the model.
+
+## Reduced model
+
+We have observed that the coefficients of some of the predictor variables were not significant. We generate a new reduced model, which excludes those variables (logplB and logplC). Once the new model has been fit, the first step is to check the `VIF`:
+
+```{r}
+RM3 <- lm(X$logdcau ~ X$logplA + X$logplD)
+car::vif(RM3)
+```
+
+We check the model hypotheses:
+
+```{r, fig.cap="Diagnostic plots for model RM3"}
+plot(RM3)
+```
+
+And we carry out the model diagnoses:
+```{r}
+summary(RM3)
+```
+
+We have obtained a model where all the coefficients are significant, and which has a coefficient of determination $R^2$  `r round(summary(RM3)$r.squared,4)`, close to 1, indicating a good linear fit of the model.
+
+Can we improve it? Yeah. We have fit the precipitation throughout the year. But we know that precipitation usually varies according to the season of the year. We will try to improve the model by adding the season factor.
+
+## Model with a factor
+
+In Lab3 we introduced a factor in the regression model that allowed us to predict the log-interval between geyser eruptions from the log-duration of the eruptions. We defined a factor that differentiated short and long durations and we used it  to find a model with a better fit.
+
+The first  model including the factor incorporates it into the intercept (see notation). After fitting it, we compute the VIF to check collinearity. Note that the output format of VIF is slightly different, but the information is the same.
+
+```{r}
+RMF1 <- lm(X$logdcau ~ X$logplA + X$logplB + X$logplC + X$logplD + X$fEst)
+car::vif(RMF1)
+```
+
+### 🖊Exercise: How many parameters has this model?
+
+```{r summary_RMF1, exercise=TRUE}
+```
+
+We perform the diagnoses of the model hypotheses:
+
+```{r, fig.cap="Diagnostic plots for model RMF1"}
+plot(RMF1)
+```
+
+We observe that most rain gauges have non-significant coefficients. The model shall  be simplified.
+
+<!-- I un cop verificades les hipòtesis, estudiem el model: -->
+
+<!-- ```{r} -->
+<!-- summary(RMF1) -->
+<!-- ``` -->
+
+## Reduced model with factor
+
+We establish the reduced model, eliminating non-significant rainfall:
+
+```{r}
+RMF2 <- lm(X$logdcau ~ X$logplA + X$fEst)
+car::vif(RMF2)
+```
+
+### 🖊Exercise: How many parameters has this model?
+
+```{r summary_RMF2, exercise=TRUE}
+```
+
+We check the model hypotheses:
+
+```{r, fig.cap="Diagnostic plots for model RMF2"}
+plot(RMF2)
+```
+
+And we verify the model: F test;  t tests and  goodness of fit with $R^2$:
+```{r}
+summary(RMF2)
+```
+
+The model has a higher coefficient of determination than the initial model, $R^2=$ `r round(summary(RMF2)$r.squared,4)`. But we can still complicate the model a little more.
+
+## Interaction: factor in slope and intercept
+
+We define a new model where we introduce the factor in all the coefficients of the model. In this case we will have a different slope a and different intercept for each season of the year (see notation). Once fitted, we control collinearity. Note that the output format is slightly different, but the information is the same:
+
+```{r}
+RMF3 <- lm(X$logdcau ~ X$logplA * X$fEst)
+car::vif(RMF3)
+```
+
+### 🖊Exercise: How many parameters has this model?
+
+```{r summary_RMF3, exercise=TRUE}
+```
+
+We check the hypotheses of the model:
+```{r, fig.cap="Diagnostic plots for model RMF3"}
+plot(RMF3)
+```
+
+And we verify the model:  F test;  t tests and goodness of fit with $R^2$:
+```{r}
+summary(RMF3)
+```
+
+In this case, $R^2=$ `r round(summary(RMF3)$r.squared,4)`
+
+## Which model shall we choose?
+
+The principle of parsimony must be applied: we will choose the model that best fits, with the minimum number of parameters as possible. It is beyond the scope of this course, but we must avoid overparametrisation.
+
+It is important to think that the number of data we have will mark us the number of reasonable parameters for our model. Informally, you should be aware that for each parameter of the model we should have at least ten data. 
+
+### 🖊Exercise: What model do we choose? Summarize the values of $R^2$ and the number of parameters. Apply the principle of parsimony to choose the best model.
+
+## Full model (with all interactions, would not make sense)
+
+The number of model parameters can increase rapidly. Not every model is valid or meaningful. We could consider a model that includes all the interactions of rain gauges... But in addition to having many parameters, it would make no sense. Look at the summary and count the number of parameters. It makes no sense.
+
+```{r}
+RMF4 <- lm(X$logdcau ~ X$logplA * X$logplB * X$logplC * X$logplD * X$fEst)
+car::vif(RMF4)
+#plot(RMF4)
+summary(RMF4)
+```
+
+# Conclusion {-}
+
+With this section we have completed the Introduction to Multiple Linear Regression.
+
+# About / Canvis {-}
+
+Material created by M. Ortego for the subjects of statistics of ETSECCPB - UPC.
+
+Versió 1.0
+
+# Credits {-}
+
+<a href="https://www.flaticon.com/free-icons/graph" title="graph icons">Graph icons created by Freepik - Flaticon</a>
+
+
